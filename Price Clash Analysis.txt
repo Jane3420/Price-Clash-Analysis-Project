@@ -1,0 +1,214 @@
+// Set vLoadFromDate = 42186; // 1.7.2015
+Let vLoadFromDate3Y = Num(yearstart(today(),-3,7)); // 1.7.2015
+
+Data:
+NoConcatenate load distinct
+	SourceDB & '|' & "Customer Code" as [%CustomerCodeKey],
+	"Customer Code",
+    "Head Office Code",
+    "Term Code",
+    "Customer Status",
+//     "Rep Code",
+    [Rep Name],
+    "Customer Last Sale",
+    SourceDB
+FROM [lib://MayoAnalyticsRoot/02.Transformation/02.QVD/Attributes/Customer.qvd](qvd)
+where SourceDB <> 'Pronto ODBC - UKL'
+and "Customer Status" <> 'C'
+and Len(Trim(SourceDB))>0
+;
+
+tmp_Item:
+LOAD distinct
+    %ItemCodeKey,
+    "Item Code",
+    %ItemGroupKey,
+    Subfield(%ItemCodeKey,'|',1) as SourceDB,
+    "Item Status"
+//     "Item APN Number",
+//     "Item Brand",
+//     "Item Condition Code",
+//     "Item Description",
+//     "Item Catalogue"
+FROM [lib://MayoAnalyticsRoot/02.Transformation\02.QVD\Attributes\Item.qvd](qvd)
+where Subfield(%ItemCodeKey,'|',1) <> 'Pronto ODBC - UKL'
+and Not Match("Item Condition Code",'O','I', 'D')
+and Not Match("Item Status", 'Z', 'L', 'R', 'X')
+and Len(Trim("Item Code"))>0
+and Len(Trim(Subfield(%ItemCodeKey,'|',1)))>0
+;
+
+inner Join (tmp_Item)
+LOAD distinct
+    %ItemGroupKey,
+    "Item Group",
+    "Item Class"
+//     "Item Group Code Desc",
+//     "Item Class Code Desc",
+//     "Item Category Code Desc"
+FROM [lib://MayoAnalyticsRoot/02.Transformation\02.QVD\Attributes\Item Hierarchy.qvd](qvd)
+where SourceDB <> 'Pronto ODBC - UKL'
+and "Item Group Desc" <> 'MARKETING'
+and not Match("Item Class", 'ZZZZ', 'XXXX', '1DEL')
+;
+
+Join (Data) Load
+	%ItemCodeKey,
+	"Item Code",
+    "Item Group",
+    "Item Class",
+    "Item Status",
+    SourceDB
+Resident tmp_Item
+;
+
+Drop table tmp_Item;
+
+Order_Line:
+LOAD
+    %ItemCodeKey,
+    Max([Last Order Date]) as [Last Order Date],
+    Max([Item Qty On Hand]) as [Item Qty On Hand]
+FROM [lib://MayoAnalyticsRoot/02.Transformation\02.QVD\Sales\ Order Line.qvd](qvd)
+Where Floor(%Date) >= $(vLoadFromDate3Y)
+Group By %ItemCodeKey
+;
+
+Left Join (Data)
+LOAD
+    %ItemCodeKey,
+    [Last Order Date],
+    [Item Qty On Hand]
+Resident Order_Line
+;
+
+Left Join (Data)
+LOAD
+    %ItemCodeKey, 
+    "List Price 0"
+FROM [lib://MayoAnalyticsRoot/02.Transformation\02.QVD\Attributes\Stock Price.qvd]
+(qvd);
+
+Drop Table Order_Line;
+
+Map_SpecialPricingPrice:
+Mapping LOAD
+    SourceDB & '|' & "Customer / HO / TC" & '|' & "Item / Group / Class" as MappingKey,
+    "Special Pricing Price"
+FROM [lib://MayoAnalyticsRoot/02.Transformation/02.QVD/Attributes/Customer Special Pricing.qvd](qvd)
+where SourceDB <> 'Pronto ODBC - UKL'
+and @Flag_CurrentPrice=1;
+
+Map_PriceOrDisc:
+Mapping LOAD
+    SourceDB & '|' & "Customer / HO / TC" & '|' & "Item / Group / Class" as MappingKey,
+     "Price Or Disc"
+FROM [lib://MayoAnalyticsRoot/02.Transformation/02.QVD/Attributes/Customer Special Pricing.qvd](qvd)
+where SourceDB <> 'Pronto ODBC - UKL'
+and @Flag_CurrentPrice=1;
+
+Map_PricingKey:
+Mapping LOAD
+    SourceDB & '|' & "Customer / HO / TC" & '|' & "Item / Group / Class" as MappingKey,
+    "Pricing Key"
+FROM [lib://MayoAnalyticsRoot/02.Transformation/02.QVD/Attributes/Customer Special Pricing.qvd](qvd)
+where SourceDB <> 'Pronto ODBC - UKL'
+and @Flag_CurrentPrice = 1;
+
+Pricing:
+Load 
+	*,
+    ApplyMap('Map_SpecialPricingPrice', SourceDB & '|' & "Customer Code" & '|' & "Item Code",null()) as "Customer & Item", 
+    ApplyMap('Map_SpecialPricingPrice', SourceDB & '|' & "Customer Code" & '|' & "Item Group",null()) as "Customer & Group", 
+    ApplyMap('Map_SpecialPricingPrice', SourceDB & '|' & "Customer Code" & '|' & "Item Class",null()) as "Customer & Class", 
+    ApplyMap('Map_SpecialPricingPrice', SourceDB & '|' & "Head Office Code" & '|' & "Item Code",null()) as "HO & Item", 
+    ApplyMap('Map_SpecialPricingPrice', SourceDB & '|' & "Head Office Code" & '|' & "Item Group",null()) as "HO & Group", 
+    ApplyMap('Map_SpecialPricingPrice', SourceDB & '|' & "Head Office Code" & '|' & "Item Class",null()) as "HO & Class", 
+    ApplyMap('Map_SpecialPricingPrice', SourceDB & '|' & "Term Code" & '|' & "Item Code",null()) as "TC & Item", 
+    ApplyMap('Map_SpecialPricingPrice', SourceDB & '|' & "Term Code" & '|' & "Item Group",null()) as "TC & Group", 
+    ApplyMap('Map_SpecialPricingPrice', SourceDB & '|' & "Term Code" & '|' & "Item Class",null()) as "TC & Class",
+    
+    ApplyMap('Map_PriceOrDisc', SourceDB & '|' & "Customer Code" & '|' & "Item Code",null()) as "Customer & Item PD", 
+    ApplyMap('Map_PriceOrDisc', SourceDB & '|' & "Customer Code" & '|' & "Item Group",null()) as "Customer & Group PD", 
+    ApplyMap('Map_PriceOrDisc', SourceDB & '|' & "Customer Code" & '|' & "Item Class",null()) as "Customer & Class PD", 
+    ApplyMap('Map_PriceOrDisc', SourceDB & '|' & "Head Office Code" & '|' & "Item Code",null()) as "HO & Item PD", 
+    ApplyMap('Map_PriceOrDisc', SourceDB & '|' & "Head Office Code" & '|' & "Item Group",null()) as "HO & Group PD", 
+    ApplyMap('Map_PriceOrDisc', SourceDB & '|' & "Head Office Code" & '|' & "Item Class",null()) as "HO & Class PD", 
+    ApplyMap('Map_PriceOrDisc', SourceDB & '|' & "Term Code" & '|' & "Item Code",null()) as "TC & Item PD", 
+    ApplyMap('Map_PriceOrDisc', SourceDB & '|' & "Term Code" & '|' & "Item Group",null()) as "TC & Group PD", 
+    ApplyMap('Map_PriceOrDisc', SourceDB & '|' & "Term Code" & '|' & "Item Class",null()) as "TC & Class PD",
+    
+    ApplyMap('Map_PricingKey', SourceDB & '|' & "Customer Code" & '|' & "Item Code", null()) as "Customer & Item PK",
+    ApplyMap('Map_PricingKey', SourceDB & '|' & "Customer Code" & '|' & "Item Group", null()) as "Customer & Group PK",
+    ApplyMap('Map_PricingKey', SourceDB & '|' & "Customer Code" & '|' & "Item Class", null()) as "Customer & Class PK",
+	ApplyMap('Map_PricingKey', SourceDB & '|' & "Head Office Code" & '|' & "Item Code", null()) as "HO & Item PK",
+    ApplyMap('Map_PricingKey', SourceDB & '|' & "Head Office Code" & '|' & "Item Group", null()) as "HO & Group PK",
+    ApplyMap('Map_PricingKey', SourceDB & '|' & "Head Office Code" & '|' & "Item Class", null()) as "HO & Class PK",
+	ApplyMap('Map_PricingKey', SourceDB & '|' & "Term Code" & '|' & "Item Code", null()) as "TC & Item PK",
+    ApplyMap('Map_PricingKey', SourceDB & '|' & "Term Code" & '|' & "Item Group", null()) as "TC & Group PK",
+    ApplyMap('Map_PricingKey', SourceDB & '|' & "Term Code" & '|' & "Item Class", null()) as "TC & Class PK"
+Resident Data;
+
+Pricing_Final:
+Load
+	*,
+    // Customer 
+    If("Customer & Item PD"='D',"List Price 0"*(1-"Customer & Item"/100),"Customer & Item") as "Customer & Item Discounted Price",
+    If("Customer & Group PD"='D',"List Price 0"*(1-"Customer & Group"/100),"Customer & Group") as "Customer & Group Discounted Price",
+    If("Customer & Class PD"='D',"List Price 0"*(1-"Customer & Class"/100),"Customer & Class") as "Customer & Class Discounted Price",
+
+    // HO
+    If("HO & Item PD"='D',"List Price 0"*(1-"HO & Item"/100),"HO & Item") as "HO & Item Discounted Price",
+    If("HO & Group PD"='D',"List Price 0"*(1-"HO & Group"/100),"HO & Group") as "HO & Group Discounted Price",
+    If("HO & Class PD"='D',"List Price 0"*(1-"HO & Class"/100),"HO & Class") as "HO & Class Discounted Price",
+
+    // Term 
+    If("TC & Item PD"='D',"List Price 0"*(1-"TC & Item"/100),"TC & Item") as "TC & Item Discounted Price",
+    If("TC & Group PD"='D',"List Price 0"*(1-"TC & Group"/100),"TC & Group") as "TC & Group Discounted Price",
+    If("TC & Class PD"='D',"List Price 0"*(1-"TC & Class"/100),"TC & Class") as "TC & Class Discounted Price",
+    
+    Coalesce("Customer & Item PK", "Customer & Group PK","Customer & Class PK", 
+    	"HO & Item PK","HO & Group PK","HO & Class PK",
+    	"TC & Item PK","TC & Group PK","TC & Class PK") as "Pricing Key",
+	(If(Not IsNull("Customer & Item") or Not IsNull("Customer & Group") or Not IsNull("Customer & Class"), 1, 0) + 
+     If(Not IsNull("HO & Item") or Not IsNull("HO & Group") or Not IsNull("HO & Class"), 1, 0) + 
+     If(Not IsNull("TC & Item") or Not IsNull("TC & Group") or Not IsNull("TC & Class"), 1, 0)) 
+     -
+     If((If(Not IsNull("Customer & Item") or Not IsNull("Customer & Group") or Not IsNull("Customer & Class"),1,0) + 
+     If(Not IsNull("HO & Item") or Not IsNull("HO & Group") or Not IsNull("HO & Class"),1,0) + 
+     If(Not IsNull("TC & Item") or Not IsNull("TC & Group") or Not IsNull("TC & Class"),1,0)) = 1, 1, 0) as "No of PD"
+Resident Pricing;
+
+Drop table Pricing;
+
+Pricing_Crash:
+NoConcatenate
+Load *,
+// 	RangeSum(If(Coalesce("Customer & Item Discounted Price","Customer & Group Discounted Price","Customer & Class Discounted Price") > 0,1,0),
+// 	If(Coalesce("HO & Item Discounted Price","HO & Group Discounted Price","HO & Class Discounted Price") > 0 and
+// 		Coalesce("HO & Item Discounted Price","HO & Group Discounted Price","HO & Class Discounted Price") <>
+// 		Coalesce("Customer & Item Discounted Price","Customer & Group Discounted Price","Customer & Class Discounted Price"),1,0),
+// 	If(Coalesce("TC & Item Discounted Price","TC & Group Discounted Price","TC & Class Discounted Price") > 0 and
+// 		Coalesce("TC & Item Discounted Price","TC & Group Discounted Price","TC & Class Discounted Price") <>
+//         Coalesce("Customer & Item Discounted Price","Customer & Group Discounted Price","Customer & Class Discounted Price") and
+// 		Coalesce("TC & Item Discounted Price","TC & Group Discounted Price","TC & Class Discounted Price") <>
+// 		Coalesce("HO & Item Discounted Price","HO & Group Discounted Price","HO & Class Discounted Price"),1,0)) as Price_Clash,   
+
+    RangeSum(
+    If(Coalesce("Customer & Item Discounted Price","Customer & Group Discounted Price","Customer & Class Discounted Price") > 0 and
+		Coalesce("HO & Item Discounted Price","HO & Group Discounted Price","HO & Class Discounted Price") > 0 and 
+    	Coalesce("Customer & Item Discounted Price","Customer & Group Discounted Price","Customer & Class Discounted Price") <>
+		Coalesce("HO & Item Discounted Price","HO & Group Discounted Price","HO & Class Discounted Price"),1,0),
+	If(Coalesce("Customer & Item Discounted Price","Customer & Group Discounted Price","Customer & Class Discounted Price") >0 and
+		Coalesce("TC & Item Discounted Price","TC & Group Discounted Price","TC & Class Discounted Price") > 0 and
+		Coalesce("Customer & Item Discounted Price","Customer & Group Discounted Price","Customer & Class Discounted Price") <>
+		Coalesce("TC & Item Discounted Price","TC & Group Discounted Price","TC & Class Discounted Price"),1,0),
+	If(Coalesce("HO & Item Discounted Price","HO & Group Discounted Price","HO & Class Discounted Price") > 0 and
+		Coalesce("TC & Item Discounted Price","TC & Group Discounted Price","TC & Class Discounted Price") > 0 and
+		Coalesce("HO & Item Discounted Price","HO & Group Discounted Price","HO & Class Discounted Price") <>
+		Coalesce("TC & Item Discounted Price", "TC & Group Discounted Price", "TC & Class Discounted Price"), 1,0)) as "Price Difference"
+Resident Pricing_Final
+Where "No of PD" > 1;
+
+Drop Table Pricing_Final;
+Drop table Data;
